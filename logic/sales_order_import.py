@@ -27,17 +27,14 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
     for page in doc:
         text = page.get_text()
 
-        # More robust customer order number regex
         customer_order_match = re.search(r'CUSTOMER ORDER NUMBER:\s*(\d+)', text, re.IGNORECASE)
         customer_order_number = customer_order_match.group(1) if customer_order_match else "UNKNOWN"
 
         name_match = re.search(r'SHIP TO:\s*(.+)', text)
         address_match = re.search(r'SHIP TO:\s*.+?\n(.*?)\n(.*?)\s+([A-Z]{2})\s+(\d{5})', text)
         phone_match = re.search(r'(\d{3}[-\s]?\d{3}[-\s]?\d{4})', text)
-        upc_match = re.search(r'(817483\d{6,7})', text)
-        qty_match = re.search(r'\n(\d+)\s+[\d.]+\s+[\d.]+', text)
 
-        if not (name_match and address_match and upc_match and qty_match):
+        if not (name_match and address_match):
             continue
 
         customer = name_match.group(1).strip()
@@ -47,24 +44,31 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         zip_code = address_match.group(4).strip()
         state_full = us_state_full(state_abbrev)
         phone = phone_match.group(1).strip() if phone_match else ""
-        upc = upc_match.group(1)
-        qty = int(qty_match.group(1))
 
-        sku = upc_to_sku.get(upc, "UNKNOWN")
-        price = upc_to_price.get(upc, 0.00)
+        # Extract all line items: look for UPCs and associated qtys
+        line_items = re.findall(r'(817483\d{6,7})\s+.*?(\d+)\s+[\d.]+\s+[\d.]+', text)
 
-        orders.append({
-            'po_number': customer_order_number,
-            'customer': customer,
-            'street': street,
-            'city': city,
-            'state': state_full,
-            'zip': zip_code,
-            'phone': phone,
-            'sku': sku,
-            'qty': qty,
-            'price': price
-        })
+        sequence = 1
+        for upc, qty_str in line_items:
+            sku = upc_to_sku.get(upc, "UNKNOWN")
+            price = upc_to_price.get(upc, 0.00)
+            qty = int(qty_str)
+
+            orders.append({
+                'po_number': customer_order_number,
+                'customer': customer,
+                'street': street,
+                'city': city,
+                'state': state_full,
+                'zip': zip_code,
+                'phone': phone,
+                'sku': sku,
+                'qty': qty,
+                'price': price,
+                'sequence': sequence
+            })
+
+            sequence += 1
 
     customers = []
     sales = []
@@ -92,7 +96,7 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
             'Invoice Address': 'CVS CareMark Corporate Office Headquarters',
             'Delivery Address': f"CVS CareMark Corporate Office Headquarters, {o['customer']}",
             'PO#': o['po_number'],
-            'order_line/sequence': 1,
+            'order_line/sequence': o['sequence'],
             'order_line/product_uom_qty': o['qty'],
             'order_line/price_unit': o['price'],
             'order_line/product_template_id': o['sku'],
@@ -100,4 +104,3 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         })
 
     return orders, pd.DataFrame(customers).drop_duplicates(), pd.DataFrame(sales)
-
