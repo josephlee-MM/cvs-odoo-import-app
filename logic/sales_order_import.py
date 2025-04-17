@@ -104,3 +104,4 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         })
 
     return orders, pd.DataFrame(customers).drop_duplicates(), pd.DataFrame(sales)
+
