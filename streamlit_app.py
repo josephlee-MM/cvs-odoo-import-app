@@ -1,4 +1,3 @@
-# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import os
@@ -44,21 +43,30 @@ if pdf_file:
     with open("input.pdf", "wb") as f:
         f.write(pdf_file.read())
 
+    # Generate both customer and sales data
     po_data, customer_df, sales_df = generate_sales_order_import("input.pdf", mapping_file)
 
+    # File paths
     customer_path = "output/customers.xlsx"
     sales_path = "output/sales_orders.xlsx"
-    customer_df.to_excel(customer_path, index=False)
+
+    # Save both files
+    generate_customer_import(customer_df, customer_path)
     sales_df.to_excel(sales_path, index=False)
 
+    # Split PDFs by Ship To name
     split_and_rename_pdfs("input.pdf", output_dir="output", names=po_data)
 
     st.success("✅ Files generated!")
+
+    # Download buttons
     st.download_button("📥 Download Customer Import Excel", open(customer_path, "rb"), file_name="customers.xlsx")
     st.download_button("📥 Download Sales Order Excel", open(sales_path, "rb"), file_name="sales_orders.xlsx")
 
+    # Show split packing slips
     st.subheader("📦 Split Packing Slips")
     for fname in os.listdir("output"):
         if fname.endswith(".pdf"):
             with open(os.path.join("output", fname), "rb") as f:
                 st.download_button(f"Download {fname}", f, file_name=fname)
+
