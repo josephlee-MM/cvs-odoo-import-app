@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import os
-from logic.customer_import import generate_customer_import
 from logic.sales_order_import import generate_sales_order_import
 from logic.split_pdfs import split_and_rename_pdfs
 
@@ -51,7 +50,7 @@ if pdf_file:
     sales_path = "output/sales_orders.xlsx"
 
     # Save both files
-    generate_customer_import(customer_df, customer_path)
+    customer_df.to_excel(customer_path, index=False)
     sales_df.to_excel(sales_path, index=False)
 
     # Split PDFs by Ship To name
