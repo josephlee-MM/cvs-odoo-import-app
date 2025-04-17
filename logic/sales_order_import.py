@@ -2,6 +2,21 @@ import fitz  # PyMuPDF
 import pandas as pd
 import re
 
+def us_state_full(abbrev):
+    mapping = {
+        "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+        "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
+        "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+        "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+        "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri",
+        "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+        "NM": "New Mexico", "NY": "New York", "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
+        "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+        "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
+        "VA": "Virginia", "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming"
+    }
+    return mapping.get(abbrev, abbrev)
+
 def generate_sales_order_import(pdf_path, sku_mapping_path):
     doc = fitz.open(pdf_path)
     sku_df = pd.read_csv(sku_mapping_path)
@@ -26,8 +41,9 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         customer = name_match.group(1).strip()
         street = address_match.group(1).strip()
         city = address_match.group(2).strip().rstrip(',')
-        state = address_match.group(3).strip()
+        state_abbrev = address_match.group(3).strip()
         zip_code = address_match.group(4).strip()
+        state_full = us_state_full(state_abbrev)
         phone = phone_match.group(1).strip() if phone_match else ""
         upc = upc_match.group(1)
         qty = int(qty_match.group(1))
@@ -40,7 +56,7 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
             'customer': customer,
             'street': street,
             'city': city,
-            'state': state,
+            'state': state_full,
             'zip': zip_code,
             'phone': phone,
             'sku': sku,
@@ -70,9 +86,9 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
             'bank_ids/acc_number': ''
         })
         sales.append({
-            'Customer': 'CVS',
-            'Invoice Address': 'CVS',
-            'Delivery Address': f"CVS, {o['customer']}",
+            'Customer': 'CVS CareMark Corporate Office Headquarters',
+            'Invoice Address': 'CVS CareMark Corporate Office Headquarters',
+            'Delivery Address': f"CVS CareMark Corporate Office Headquarters, {o['customer']}",
             'PO#': o['po_number'],
             'order_line/sequence': 1,
             'order_line/product_uom_qty': o['qty'],
