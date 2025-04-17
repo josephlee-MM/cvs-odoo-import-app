@@ -27,11 +27,9 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
     for page in doc:
         text = page.get_text()
 
-        # Extract customer order number (this is the true PO#)
-        customer_order_match = re.search(r'Customer Order Number:\s*(\d+)', text)
-        if not customer_order_match:
-            continue
-        customer_order_number = customer_order_match.group(1)
+        # More robust customer order number regex
+        customer_order_match = re.search(r'CUSTOMER ORDER NUMBER:\s*(\d+)', text, re.IGNORECASE)
+        customer_order_number = customer_order_match.group(1) if customer_order_match else "UNKNOWN"
 
         name_match = re.search(r'SHIP TO:\s*(.+)', text)
         address_match = re.search(r'SHIP TO:\s*.+?\n(.*?)\n(.*?)\s+([A-Z]{2})\s+(\d{5})', text)
@@ -102,3 +100,4 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         })
 
     return orders, pd.DataFrame(customers).drop_duplicates(), pd.DataFrame(sales)
+
