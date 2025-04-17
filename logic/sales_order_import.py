@@ -27,17 +27,21 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
     for page in doc:
         text = page.get_text()
 
-        po_match = re.search(r'PO(\d+)', text)
+        # Extract customer order number (this is the true PO#)
+        customer_order_match = re.search(r'Customer Order Number:\s*(\d+)', text)
+        if not customer_order_match:
+            continue
+        customer_order_number = customer_order_match.group(1)
+
         name_match = re.search(r'SHIP TO:\s*(.+)', text)
         address_match = re.search(r'SHIP TO:\s*.+?\n(.*?)\n(.*?)\s+([A-Z]{2})\s+(\d{5})', text)
         phone_match = re.search(r'(\d{3}[-\s]?\d{3}[-\s]?\d{4})', text)
         upc_match = re.search(r'(817483\d{6,7})', text)
         qty_match = re.search(r'\n(\d+)\s+[\d.]+\s+[\d.]+', text)
 
-        if not (po_match and name_match and address_match and upc_match and qty_match):
+        if not (name_match and address_match and upc_match and qty_match):
             continue
 
-        po_number = po_match.group(0)
         customer = name_match.group(1).strip()
         street = address_match.group(1).strip()
         city = address_match.group(2).strip().rstrip(',')
@@ -52,7 +56,7 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         price = upc_to_price.get(upc, 0.00)
 
         orders.append({
-            'po_number': po_number,
+            'po_number': customer_order_number,
             'customer': customer,
             'street': street,
             'city': city,
@@ -98,4 +102,3 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
         })
 
     return orders, pd.DataFrame(customers).drop_duplicates(), pd.DataFrame(sales)
-
