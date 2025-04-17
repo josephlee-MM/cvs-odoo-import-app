@@ -1,71 +1,129 @@
-import streamlit as st
+import fitz  # PyMuPDF
 import pandas as pd
-import os
-from logic.sales_order_import import generate_sales_order_import
-from logic.split_pdfs import split_and_rename_pdfs
+import re
 
-# Ensure output and data folders exist
-os.makedirs("output", exist_ok=True)
-os.makedirs("data", exist_ok=True)
+def us_state_full(abbrev):
+    mapping = {
+        "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+        "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
+        "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+        "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+        "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri",
+        "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+        "NM": "New Mexico", "NY": "New York", "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
+        "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+        "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
+        "VA": "Virginia", "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming"
+    }
+    return mapping.get(abbrev, abbrev)
 
-mapping_file = "data/sku_price_mapping.csv"
+def generate_sales_order_import(pdf_path, sku_mapping_path):
+    doc = fitz.open(pdf_path)
+    sku_df = pd.read_csv(sku_mapping_path)
+    upc_to_sku = dict(zip(sku_df['UPC'].astype(str), sku_df['SKU']))
+    upc_to_price = dict(zip(sku_df['UPC'].astype(str), sku_df['Price']))
 
-# Initialize SKU mapping file if it doesn't exist
-if not os.path.exists(mapping_file):
-    pd.DataFrame(columns=["UPC", "SKU", "Price"]).to_csv(mapping_file, index=False)
+    orders = []
+    for page in doc:
+        text = page.get_text()
+        lines = text.splitlines()
 
-# Load mapping into memory
-sku_df = pd.read_csv(mapping_file)
+        # --- Extract PO number ---
+        po_number = ""
+        for line in lines:
+            if "CUSTOMER ORDER NUMBER:" in line.upper():
+                match = re.search(r'(\d{6,})', line)
+                if match:
+                    po_number = match.group(1)
+                    break
 
-st.title("🧾 CVS PDF → Odoo Import Files")
+        # --- Extract Ship To block ---
+        ship_to_block = []
+        start = False
+        for line in lines:
+            if "SHIP TO:" in line:
+                start = True
+                continue
+            if start and ("BILL TO:" in line or line.strip() == ""):
+                break
+            if start:
+                ship_to_block.append(line.strip())
 
-# --- Admin Panel ---
-st.sidebar.header("🛠 SKU & Price Admin Panel")
-with st.sidebar.expander("View / Update SKU Mapping", expanded=True):
-    st.dataframe(sku_df, use_container_width=True)
+        customer = ship_to_block[0] if len(ship_to_block) > 0 else ""
+        street = ship_to_block[1] if len(ship_to_block) > 1 else ""
+        city = ""
+        state = ""
+        zip_code = ""
+        phone = ""
 
-    with st.form("add_mapping"):
-        upc = st.text_input("UPC")
-        sku = st.text_input("SKU")
-        price = st.number_input("Price", min_value=0.0, step=0.01)
-        submitted = st.form_submit_button("Add / Update")
-        if submitted:
-            sku_df = sku_df[sku_df["UPC"] != upc]  # Remove old if exists
-            sku_df.loc[len(sku_df)] = [upc, sku, price]
-            sku_df.to_csv(mapping_file, index=False)
-            st.success("Mapping updated. Refresh to apply.")
+        for line in ship_to_block:
+            match = re.search(r'(.*),\s+([A-Z]{2})\s+(\d{5})', line)
+            if match:
+                city = match.group(1).strip()
+                state = us_state_full(match.group(2).strip())
+                zip_code = match.group(3).strip()
 
-# --- File Uploads ---
-pdf_file = st.file_uploader("📄 Upload CVS Packing Slip PDF", type=["pdf"])
+            phone_match = re.search(r'(\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4})', line)
+            if phone_match:
+                phone = phone_match.group(1)
 
-if pdf_file:
-    with open("input.pdf", "wb") as f:
-        f.write(pdf_file.read())
+        # --- Extract line items (UPC, QTY) ---
+        item_lines = re.findall(r'(817483\d{6,7})[^\n]*?(\d+)\s+[\d.]+\s+[\d.]+', text)
 
-    # Generate both customer and sales data
-    po_data, customer_df, sales_df = generate_sales_order_import("input.pdf", mapping_file)
+        sequence = 1
+        for upc, qty in item_lines:
+            sku = upc_to_sku.get(upc, "UNKNOWN")
+            price = upc_to_price.get(upc, 0.00)
 
-    # File paths
-    customer_path = "output/customers.xlsx"
-    sales_path = "output/sales_orders.xlsx"
+            orders.append({
+                'po_number': po_number,
+                'customer': customer,
+                'street': street,
+                'city': city,
+                'state': state,
+                'zip': zip_code,
+                'phone': phone,
+                'sku': sku,
+                'qty': int(qty),
+                'price': float(price),
+                'sequence': sequence
+            })
+            sequence += 1
 
-    # Save both files
-    customer_df.to_excel(customer_path, index=False)
-    sales_df.to_excel(sales_path, index=False)
+    customers = []
+    sales = []
 
-    # Split PDFs by Ship To name
-    split_and_rename_pdfs("input.pdf", output_dir="output", names=po_data)
+    for o in orders:
+        customers.append({
+            'name': o['customer'],
+            'is_company': 0,
+            'company_name': 'CVS CareMark Corporate Office Headquarters',
+            'country_id': 'US',
+            'state_id': f"{o['state']} (US)",
+            'zip': o['zip'],
+            'city': o['city'],
+            'street': o['street'],
+            'street2': '',
+            'phone': o['phone'],
+            'mobile': '',
+            'email': '',
+            'vat': '',
+            'bank_ids/bank': '',
+            'bank_ids/acc_number': ''
+        })
 
-    st.success("✅ Files generated!")
+        sales.append({
+            'Customer': 'CVS CareMark Corporate Office Headquarters',
+            'Invoice Address': 'CVS CareMark Corporate Office Headquarters',
+            'Delivery Address': f"CVS CareMark Corporate Office Headquarters, {o['customer']}",
+            'PO#': o['po_number'],
+            'order_line/sequence': o['sequence'],
+            'order_line/product_uom_qty': o['qty'],
+            'order_line/price_unit': o['price'],
+            'order_line/product_template_id': o['sku'],
+            'order_line/product_uom': 'Each - 1'
+        })
 
-    # Download buttons
-    st.download_button("📥 Download Customer Import Excel", open(customer_path, "rb"), file_name="customers.xlsx")
-    st.download_button("📥 Download Sales Order Excel", open(sales_path, "rb"), file_name="sales_orders.xlsx")
+    return orders, pd.DataFrame(customers).drop_duplicates(), pd.DataFrame(sales)
 
-    # Show split packing slips
-    st.subheader("📦 Split Packing Slips")
-    for fname in os.listdir("output"):
-        if fname.endswith(".pdf"):
-            with open(os.path.join("output", fname), "rb") as f:
-                st.download_button(f"Download {fname}", f, file_name=fname)
 
