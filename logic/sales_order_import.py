@@ -26,48 +26,68 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
     orders = []
     for page in doc:
         text = page.get_text()
+        lines = text.splitlines()
 
-        customer_order_match = re.search(r'CUSTOMER ORDER NUMBER:\s*(\d+)', text, re.IGNORECASE)
-        customer_order_number = customer_order_match.group(1) if customer_order_match else "UNKNOWN"
+        # --- Extract PO number ---
+        po_number = ""
+        for line in lines:
+            if "CUSTOMER ORDER NUMBER:" in line.upper():
+                match = re.search(r'(\d{6,})', line)
+                if match:
+                    po_number = match.group(1)
+                    break
 
-        name_match = re.search(r'SHIP TO:\s*(.+)', text)
-        address_match = re.search(r'SHIP TO:\s*.+?\n(.*?)\n(.*?)\s+([A-Z]{2})\s+(\d{5})', text)
-        phone_match = re.search(r'(\d{3}[-\s]?\d{3}[-\s]?\d{4})', text)
+        # --- Extract Ship To block ---
+        ship_to_block = []
+        start = False
+        for line in lines:
+            if "SHIP TO:" in line:
+                start = True
+                continue
+            if start and ("BILL TO:" in line or line.strip() == ""):
+                break
+            if start:
+                ship_to_block.append(line.strip())
 
-        if not (name_match and address_match):
-            continue
+        customer = ship_to_block[0] if len(ship_to_block) > 0 else ""
+        street = ship_to_block[1] if len(ship_to_block) > 1 else ""
+        city = ""
+        state = ""
+        zip_code = ""
+        phone = ""
 
-        customer = name_match.group(1).strip()
-        street = address_match.group(1).strip()
-        city = address_match.group(2).strip().rstrip(',')
-        state_abbrev = address_match.group(3).strip()
-        zip_code = address_match.group(4).strip()
-        state_full = us_state_full(state_abbrev)
-        phone = phone_match.group(1).strip() if phone_match else ""
+        for line in ship_to_block:
+            match = re.search(r'(.*),\s+([A-Z]{2})\s+(\d{5})', line)
+            if match:
+                city = match.group(1).strip()
+                state = us_state_full(match.group(2).strip())
+                zip_code = match.group(3).strip()
 
-        # Extract all line items: look for UPCs and associated qtys
-        line_items = re.findall(r'(817483\d{6,7})\s+.*?(\d+)\s+[\d.]+\s+[\d.]+', text)
+            phone_match = re.search(r'(\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4})', line)
+            if phone_match:
+                phone = phone_match.group(1)
+
+        # --- Extract line items (UPC, QTY) ---
+        item_lines = re.findall(r'(817483\d{6,7})[^\n]*?(\d+)\s+[\d.]+\s+[\d.]+', text)
 
         sequence = 1
-        for upc, qty_str in line_items:
+        for upc, qty in item_lines:
             sku = upc_to_sku.get(upc, "UNKNOWN")
             price = upc_to_price.get(upc, 0.00)
-            qty = int(qty_str)
 
             orders.append({
-                'po_number': customer_order_number,
+                'po_number': po_number,
                 'customer': customer,
                 'street': street,
                 'city': city,
-                'state': state_full,
+                'state': state,
                 'zip': zip_code,
                 'phone': phone,
                 'sku': sku,
-                'qty': qty,
-                'price': price,
+                'qty': int(qty),
+                'price': float(price),
                 'sequence': sequence
             })
-
             sequence += 1
 
     customers = []
@@ -91,6 +111,7 @@ def generate_sales_order_import(pdf_path, sku_mapping_path):
             'bank_ids/bank': '',
             'bank_ids/acc_number': ''
         })
+
         sales.append({
             'Customer': 'CVS CareMark Corporate Office Headquarters',
             'Invoice Address': 'CVS CareMark Corporate Office Headquarters',
